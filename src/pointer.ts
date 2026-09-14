@@ -1,4 +1,4 @@
-import type { PaneDropTarget, PaneEngine, PanePlacementMode } from './engine.js';
+import type { PaneEngine, PanePlacementMode } from './engine.js';
 
 interface PendingDrag {
   active: boolean;
@@ -19,46 +19,24 @@ export interface PanePointerOptions {
   placementMode?: PanePlacementMode;
 }
 
-const previewClasses = [
-  'is-pane-drop-target',
-  'pane-drop-within',
-  'pane-drop-left',
-  'pane-drop-right',
-  'pane-drop-above',
-  'pane-drop-below',
-];
-
 export function installPanePointerController(
   engine: PaneEngine,
   options: PanePointerOptions = {},
 ): () => void {
   let drag: PendingDrag | undefined;
   let resize: PendingResize | undefined;
-  let preview: PaneDropTarget | undefined;
-
-  const clearPreview = (): void => {
-    if (preview) engine.groupElement(preview.groupId)?.classList.remove(...previewClasses);
-    preview = undefined;
-  };
-
-  const showPreview = (target?: PaneDropTarget): void => {
-    if (target?.groupId === preview?.groupId && target?.direction === preview?.direction) return;
-    clearPreview();
-    if (!target) return;
-    preview = target;
-    engine
-      .groupElement(target.groupId)
-      ?.classList.add('is-pane-drop-target', `pane-drop-${target.direction}`);
-  };
+  const preview = engine.createDropDecoration({
+    activeClass: 'is-pane-drop-target',
+    directionClass: (direction) => `pane-drop-${direction}`,
+  });
 
   const mouseDown = (event: MouseEvent): void => {
     if (drag || resize || event.button !== 0) return;
     const target = event.target instanceof Element ? event.target : undefined;
-    const sash = target?.closest<HTMLElement>('.pane-sash[data-pane-split-id]');
-    const splitId = sash?.dataset.paneSplitId;
-    if (splitId) {
-      const split = engine.split(splitId);
-      const geometry = engine.splitGeometry(splitId);
+    const hit = engine.hitTest(event.target);
+    if (hit?.kind === 'split') {
+      const split = engine.split(hit.splitId);
+      const geometry = engine.splitGeometry(hit.splitId);
       if (!split || !geometry) return;
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -70,19 +48,22 @@ export function installPanePointerController(
         ),
         axis: split.axis,
         initialRatio: split.ratio,
-        splitId,
+        splitId: hit.splitId,
         start: horizontal ? event.clientX : event.clientY,
       };
       return;
     }
 
-    const tab = target?.closest<HTMLElement>('.pane-tab[data-tab-panel-id]');
-    if (tab && target?.closest('.pane-tab-close')) return;
+    if (hit?.kind === 'tab-close') return;
     const handle = target?.closest<HTMLElement>('[data-pane-drag-handle]');
-    if (!tab && !handle) return;
+    const handleHit = handle ? engine.hitTest(handle) : undefined;
     const panelId =
-      tab?.dataset.tabPanelId ??
-      handle?.closest<HTMLElement>('.pane-panel[data-pane-panel-id]')?.dataset.panePanelId;
+      hit?.kind === 'tab' || hit?.kind === 'panel'
+        ? hit.panelId
+        : handleHit?.kind === 'panel'
+          ? handleHit.panelId
+          : undefined;
+    if (hit?.kind !== 'tab' && !handle) return;
     const group = panelId ? engine.groupForPanel(panelId) : undefined;
     if (!panelId || !group) return;
     event.preventDefault();
@@ -116,7 +97,7 @@ export function installPanePointerController(
       engine.element.classList.add('is-pane-dragging');
     }
     engine.movePanelDrag(event.clientX, event.clientY);
-    showPreview(engine.dropTargetAt(event.clientX, event.clientY));
+    preview.set(engine.dropTargetAt(event.clientX, event.clientY));
   };
 
   const mouseUp = (event: MouseEvent): void => {
@@ -128,19 +109,17 @@ export function installPanePointerController(
     const finished = drag;
     drag = undefined;
     engine.element.classList.remove('is-pane-dragging');
-    clearPreview();
+    const position = engine.positionForDropTarget(preview.target);
+    preview.set();
     if (!finished?.active) return;
     event.preventDefault();
-    engine.finishPanelDrag(
-      engine.positionAt(event.clientX, event.clientY),
-      options.placementMode ?? 'reflow',
-    );
+    engine.finishPanelDrag(position, options.placementMode ?? 'reflow');
   };
 
   const cancel = (): void => {
     drag = undefined;
     resize = undefined;
-    clearPreview();
+    preview.set();
     engine.element.classList.remove('is-pane-dragging');
     engine.cancelPanelDrag();
   };
@@ -161,5 +140,6 @@ export function installPanePointerController(
     window.removeEventListener('blur', cancel);
     window.removeEventListener('keydown', keyDown, true);
     cancel();
+    preview.dispose();
   };
 }

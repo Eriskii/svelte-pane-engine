@@ -1,6 +1,7 @@
 {
   "name": "svelte-pane-engine",
   "version": "0.1.0",
+  "description": "Framework-neutral pane layout engine with optional Svelte renderer bindings.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,7 +9,10 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "src/style.css"
+    "src/style.css",
+    "LICENSE",
+    "PROVENANCE.md",
+    "README.md"
   ],
   "sideEffects": [
     "./src/style.css"
@@ -27,16 +31,28 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "npm run build",
-    "test": "vitest run"
+    "test": "vitest run --maxWorkers=1",
+    "prepack": "npm run build && npm test"
   },
   "peerDependencies": {
     "svelte": "^5.0.0"
   },
   "devDependencies": {
+    "happy-dom": "^20.14.5",
     "prettier": "^3.9.6",
     "svelte": "^5.56.10",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Eriskii/svelte-pane-engine.git"
+  },
+  "homepage": "https://github.com/Eriskii/svelte-pane-engine#readme",
+  "bugs": {
+    "url": "https://github.com/Eriskii/svelte-pane-engine/issues"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

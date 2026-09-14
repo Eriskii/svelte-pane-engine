@@ -34,11 +34,67 @@ export interface PaneDisposable {
   dispose(): void;
 }
 
+export interface PaneGroupElements {
+  /** The positioned group root. Owned by the engine; do not remove it. */
+  readonly element: HTMLElement;
+  /** The tab/header bar. Extensions may append application-owned controls here. */
+  readonly tabBar: HTMLElement;
+  /** The ordered list of engine-owned tabs. */
+  readonly tabList: HTMLElement;
+  /** The container for panel renderer elements. */
+  readonly content: HTMLElement;
+  /** Resolve an engine-owned tab without depending on its DOM attributes. */
+  tabElement(panelId: string): HTMLElement | undefined;
+}
+
+export interface PanePanelRenderContext {
+  readonly group: PaneGroupNode;
+  readonly elements: PaneGroupElements;
+}
+
 export interface PanePanelRenderer {
   readonly element: HTMLElement;
   dispose(): void;
-  update(panel: PanePanelState, visible: boolean): void;
+  update(panel: PanePanelState, visible: boolean, context: PanePanelRenderContext): void;
 }
+
+export interface PaneGroupExtensionContext {
+  readonly activePanel: PanePanelState;
+  readonly activeRenderer: PanePanelRenderer;
+  readonly elements: PaneGroupElements;
+  readonly group: PaneGroupNode;
+  readonly phase: 'active' | 'exiting';
+}
+
+/** An application-owned view whose lifetime follows one pane group. */
+export interface PaneGroupExtension {
+  dispose(): void;
+  update(context: PaneGroupExtensionContext): void;
+}
+
+export type PaneGroupExtensionFactory = (context: PaneGroupExtensionContext) => PaneGroupExtension;
+
+export interface PaneGroupExtensionRegistration extends PaneDisposable {
+  /** Re-run extension updates after application-owned content changes. */
+  refresh(groupId?: string): void;
+}
+
+export interface PaneDropDecorationOptions {
+  activeClass: string;
+  directionClass(direction: PaneDirection): string;
+}
+
+export interface PaneDropDecoration extends PaneDisposable {
+  readonly target: PaneDropTarget | undefined;
+  set(target?: PaneDropTarget): void;
+}
+
+export type PaneElementHit =
+  | { kind: 'group'; groupId: string }
+  | { kind: 'panel'; groupId: string; panelId: string }
+  | { kind: 'split'; axis: PaneSplitNode['axis']; splitId: string }
+  | { kind: 'tab'; groupId: string; panelId: string }
+  | { kind: 'tab-close'; groupId: string; panelId: string };
 
 export interface PaneEngineOptions {
   createRenderer(panel: PanePanelState): PanePanelRenderer;
@@ -63,10 +119,11 @@ export interface PaneDragSelection {
   sourceGroupId: string;
 }
 
-interface PaneGroupView {
-  content: HTMLElement;
-  element: HTMLElement;
-  tabs: HTMLElement;
+interface PaneGroupView extends PaneGroupElements {}
+
+interface GroupExtensionRegistrationState {
+  factory: PaneGroupExtensionFactory;
+  instances: Map<string, PaneGroupExtension>;
 }
 
 interface FloatingPaneGroup {
@@ -84,6 +141,7 @@ export class PaneEngine {
   readonly #splitViews = new Map<string, HTMLElement>();
   readonly #renderers = new Map<string, { component: string; renderer: PanePanelRenderer }>();
   readonly #listeners = new Set<() => void>();
+  readonly #groupExtensions = new Set<GroupExtensionRegistrationState>();
   readonly #resizeObserver: ResizeObserver;
   readonly #animator: PaneGeometryAnimator;
   #geometry: PaneGeometry = { groups: new Map(), splits: new Map() };
@@ -192,8 +250,109 @@ export class PaneEngine {
     return group ? structuredClone(group) : undefined;
   }
 
+  /** Stable element contract for application group headers and interactions. */
+  groupElements(groupId: string): PaneGroupElements | undefined {
+    return this.#groupViews.get(groupId);
+  }
+
+  /** @deprecated Prefer groupElements when integrating application UI. */
   groupElement(groupId: string): HTMLElement | undefined {
-    return this.#groupViews.get(groupId)?.element;
+    return this.groupElements(groupId)?.element;
+  }
+
+  /** Resolve engine-owned DOM without depending on its selectors or data attributes. */
+  hitTest(target: EventTarget | null): PaneElementHit | undefined {
+    const element =
+      target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    if (!element || !this.element.contains(element)) return undefined;
+
+    const splitElement = element.closest<HTMLElement>('[data-pane-split-id]');
+    const splitId = splitElement?.dataset.paneSplitId;
+    const split = splitId ? this.split(splitId) : undefined;
+    if (splitId && split) return { kind: 'split', splitId, axis: split.axis };
+
+    const tab = element.closest<HTMLElement>('[data-tab-panel-id]');
+    const tabPanelId = tab?.dataset.tabPanelId;
+    const tabGroup = tabPanelId ? this.groupForPanel(tabPanelId) : undefined;
+    if (tabPanelId && tabGroup) {
+      return {
+        kind: element.closest('.pane-tab-close') ? 'tab-close' : 'tab',
+        panelId: tabPanelId,
+        groupId: tabGroup.id,
+      };
+    }
+
+    const panelElement = element.closest<HTMLElement>('[data-pane-panel-id]');
+    const panelId = panelElement?.dataset.panePanelId;
+    const panelGroup = panelId ? this.groupForPanel(panelId) : undefined;
+    if (panelId && panelGroup) return { kind: 'panel', panelId, groupId: panelGroup.id };
+
+    const groupElement = element.closest<HTMLElement>('[data-pane-group-id]');
+    const groupId = groupElement?.dataset.paneGroupId;
+    return groupId && this.#groupViews.get(groupId)?.element === groupElement
+      ? { kind: 'group', groupId }
+      : undefined;
+  }
+
+  /** Attach one application extension to every group for exactly that group's lifetime. */
+  registerGroupExtension(factory: PaneGroupExtensionFactory): PaneGroupExtensionRegistration {
+    const registration: GroupExtensionRegistrationState = { factory, instances: new Map() };
+    this.#groupExtensions.add(registration);
+    for (const group of this.groupNodes()) {
+      const view = this.#groupViews.get(group.id);
+      if (view) this.syncGroupExtension(registration, group, view);
+    }
+    let disposed = false;
+    return {
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        this.#groupExtensions.delete(registration);
+        for (const extension of registration.instances.values()) extension.dispose();
+        registration.instances.clear();
+      },
+      refresh: (groupId?: string) => {
+        if (disposed) return;
+        for (const group of this.groupNodes()) {
+          if (groupId && group.id !== groupId) continue;
+          const view = this.#groupViews.get(group.id);
+          if (view) this.syncGroupExtension(registration, group, view);
+        }
+      },
+    };
+  }
+
+  /** Create an isolated class-based drop preview owned by the caller. */
+  createDropDecoration(options: PaneDropDecorationOptions): PaneDropDecoration {
+    let current: PaneDropTarget | undefined;
+    let currentElement: HTMLElement | undefined;
+    const clear = (): void => {
+      if (current && currentElement) {
+        currentElement.classList.remove(
+          options.activeClass,
+          options.directionClass(current.direction),
+        );
+      }
+      current = undefined;
+      currentElement = undefined;
+    };
+    return {
+      get target() {
+        return current ? { ...current } : undefined;
+      },
+      set: (target?: PaneDropTarget) => {
+        if (target?.groupId === current?.groupId && target?.direction === current?.direction)
+          return;
+        clear();
+        if (!target) return;
+        const element = this.#groupViews.get(target.groupId)?.element;
+        if (!element) return;
+        current = { ...target };
+        currentElement = element;
+        element.classList.add(options.activeClass, options.directionClass(target.direction));
+      },
+      dispose: clear,
+    };
   }
 
   splitElement(splitId: string): HTMLElement | undefined {
@@ -222,10 +381,8 @@ export class PaneEngine {
   activatePanel(panelId: string): void {
     const group = groupContainingPanel(this.#state.root, panelId);
     if (!group || group.activePanelId === panelId) return;
-    animateTabMutation(this.element, () => {
-      setActivePanePanel(this.#state, panelId);
-      this.syncViews();
-    });
+    setActivePanePanel(this.#state, panelId);
+    this.syncViews();
     this.emitChange();
   }
 
@@ -234,14 +391,18 @@ export class PaneEngine {
     if (!group) return;
     const closesGroup = group.panels.length === 1;
     const closingView = closesGroup ? this.#groupViews.get(group.id) : undefined;
+    const preserve = closingView
+      ? this.animateExit(group, closingView.element)
+        ? closingView.element
+        : undefined
+      : undefined;
     const update = () => {
       removePanePanel(this.#state, panelId);
-      this.syncViews(closingView?.element);
+      this.syncViews(preserve);
       this.recalculate(false);
       this.emitChange();
     };
     if (closesGroup) {
-      if (closingView) this.animateExit(closingView.element);
       update();
     } else {
       animateTabMutation(this.element, update);
@@ -286,9 +447,14 @@ export class PaneEngine {
     };
   }
 
+  positionForDropTarget(target: PaneDropTarget | undefined): PanePosition | undefined {
+    return target && findPaneGroup(this.#state.root, target.groupId)
+      ? { referenceGroupId: target.groupId, direction: target.direction }
+      : undefined;
+  }
+
   positionAt(clientX: number, clientY: number): PanePosition | undefined {
-    const target = this.dropTargetAt(clientX, clientY);
-    return target ? { referenceGroupId: target.groupId, direction: target.direction } : undefined;
+    return this.positionForDropTarget(this.dropTargetAt(clientX, clientY));
   }
 
   beginPanelDrag(
@@ -386,6 +552,11 @@ export class PaneEngine {
     this.#animator.dispose();
     this.element.removeEventListener('click', this.click, true);
     this.element.removeEventListener('mousedown', this.activateFromPointer, true);
+    for (const registration of this.#groupExtensions) {
+      for (const extension of registration.instances.values()) extension.dispose();
+      registration.instances.clear();
+    }
+    this.#groupExtensions.clear();
     for (const { renderer } of this.#renderers.values()) renderer.dispose();
     this.#renderers.clear();
     this.#groupViews.clear();
@@ -433,9 +604,13 @@ export class PaneEngine {
     for (const group of groups) {
       const view = this.#groupViews.get(group.id) ?? this.createGroupView(group.id);
       this.syncGroup(view, group);
+      for (const registration of this.#groupExtensions) {
+        this.syncGroupExtension(registration, group, view);
+      }
     }
     for (const [groupId, view] of this.#groupViews) {
       if (wantedGroups.has(groupId) || view.element === preserve) continue;
+      this.disposeGroupExtensions(groupId);
       view.element.remove();
       this.#groupViews.delete(groupId);
     }
@@ -471,7 +646,17 @@ export class PaneEngine {
     header.append(tabs);
     element.append(header, content);
     this.element.append(element);
-    const view = { element, tabs, content };
+    const view = {
+      element,
+      tabBar: header,
+      tabList: tabs,
+      content,
+      tabElement: (panelId: string) =>
+        [...tabs.children].find(
+          (candidate): candidate is HTMLElement =>
+            candidate instanceof HTMLElement && candidate.dataset.tabPanelId === panelId,
+        ),
+    };
     this.#groupViews.set(groupId, view);
     return view;
   }
@@ -486,29 +671,69 @@ export class PaneEngine {
     view.element.dataset.paneGroupId = group.id;
 
     const existingTabs = new Map(
-      [...view.tabs.querySelectorAll<HTMLElement>(':scope > .pane-tab')].map((tab) => [
+      [...view.tabList.querySelectorAll<HTMLElement>(':scope > .pane-tab')].map((tab) => [
         tab.dataset.tabPanelId ?? '',
         tab,
       ]),
     );
-    for (const panelId of group.panels) {
+    for (const [index, panelId] of group.panels.entries()) {
       const panel = this.#state.panels[panelId];
       const current = this.#renderers.get(panelId)?.renderer;
       if (!panel || !current) continue;
       const tab = existingTabs.get(panelId) ?? createTab(panel);
       existingTabs.delete(panelId);
       tab.classList.toggle('pane-tab-active', group.activePanelId === panelId);
-      tab.querySelector<HTMLElement>('.pane-tab-title')!.textContent = panel.title;
-      view.tabs.append(tab);
+      const title = tab.querySelector<HTMLElement>('.pane-tab-title')!;
+      if (title.textContent !== panel.title) title.textContent = panel.title;
+      if (view.tabList.children[index] !== tab) {
+        view.tabList.insertBefore(tab, view.tabList.children[index] ?? null);
+      }
       current.element.classList.add('pane-panel');
       current.element.dataset.panePanelId = panel.id;
-      view.content.append(current.element);
+      if (view.content.children[index] !== current.element) {
+        view.content.insertBefore(current.element, view.content.children[index] ?? null);
+      }
       const visible = group.activePanelId === panelId;
       current.element.hidden = !visible;
       current.element.classList.toggle('is-headerless', group.panels.length === 1);
-      current.update(panel, visible);
+      current.update(panel, visible, {
+        group: structuredClone(group),
+        elements: view,
+      });
     }
     for (const stale of existingTabs.values()) stale.remove();
+  }
+
+  private groupNodes(): PaneGroupNode[] {
+    return [...paneGroups(this.#state.root), ...(this.#floating ? [this.#floating.group] : [])];
+  }
+
+  private syncGroupExtension(
+    registration: GroupExtensionRegistrationState,
+    group: PaneGroupNode,
+    elements: PaneGroupElements,
+    phase: PaneGroupExtensionContext['phase'] = 'active',
+  ): void {
+    const activePanel = this.#state.panels[group.activePanelId];
+    const activeRenderer = this.#renderers.get(group.activePanelId)?.renderer;
+    if (!activePanel || !activeRenderer) return;
+    const context = {
+      activePanel: structuredClone(activePanel),
+      activeRenderer,
+      elements,
+      group: structuredClone(group),
+      phase,
+    };
+    const current = registration.instances.get(group.id);
+    if (current) current.update(context);
+    else registration.instances.set(group.id, registration.factory(context));
+  }
+
+  private disposeGroupExtensions(groupId: string): void {
+    for (const registration of this.#groupExtensions) {
+      registration.instances.get(groupId)?.dispose();
+      registration.instances.delete(groupId);
+    }
   }
 
   private recalculate(warp: boolean, initial?: ReadonlyMap<string, PaneRect>): void {
@@ -593,8 +818,14 @@ export class PaneEngine {
     }
   }
 
-  private animateExit(element: HTMLElement): void {
-    if (prefersReducedMotion()) return;
+  private animateExit(group: PaneGroupNode, element: HTMLElement): boolean {
+    if (prefersReducedMotion()) return false;
+    const view = this.#groupViews.get(group.id);
+    if (view) {
+      for (const registration of this.#groupExtensions) {
+        this.syncGroupExtension(registration, group, view, 'exiting');
+      }
+    }
     element.classList.add('is-pane-exiting');
     const animation = element.animate(
       [
@@ -614,9 +845,11 @@ export class PaneEngine {
         element.remove();
         const groupId = element.dataset.paneGroupId;
         if (groupId && this.#groupViews.get(groupId)?.element === element) {
+          this.disposeGroupExtensions(groupId);
           this.#groupViews.delete(groupId);
         }
       });
+    return true;
   }
 
   private emitChange(): void {

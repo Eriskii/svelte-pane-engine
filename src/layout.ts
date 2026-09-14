@@ -215,12 +215,17 @@ export function removePanePanel(
   const group = groupContainingPanel(state.root, panelId);
   if (!panel || !group) return undefined;
 
-  group.panels.splice(group.panels.indexOf(panelId), 1);
+  const index = group.panels.indexOf(panelId);
+  group.panels.splice(index, 1);
   delete state.panels[panelId];
   if (!group.panels.length) state.root = removePaneGroup(state.root, group.id);
-  else if (group.activePanelId === panelId) group.activePanelId = group.panels[0];
+  else if (group.activePanelId === panelId) {
+    group.activePanelId = group.panels[Math.min(index, group.panels.length - 1)];
+  }
   if (state.activePanelId === panelId) {
-    state.activePanelId = group.panels[0] ?? paneGroups(state.root)[0]?.activePanelId;
+    state.activePanelId = group.panels.length
+      ? group.activePanelId
+      : paneGroups(state.root)[0]?.activePanelId;
   }
   return panel;
 }

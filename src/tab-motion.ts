@@ -19,12 +19,18 @@ export function animateTabMutation(root: HTMLElement, update: () => void): void 
   for (const tab of root.querySelectorAll<HTMLElement>(tabSelector)) {
     const id = tab.dataset.tabPanelId;
     if (!id) continue;
+    const previous = before.get(id);
+    const current = tab.getBoundingClientRect();
+    if (
+      previous &&
+      Math.abs(previous.left - current.left) < 0.5 &&
+      Math.abs(previous.top - current.top) < 0.5
+    )
+      continue;
     const content = tab.querySelector<HTMLElement>('.pane-tab-content') ?? tab;
     for (const animation of content.getAnimations()) {
       if (animation.id.startsWith(animationPrefix)) animation.cancel();
     }
-    const previous = before.get(id);
-    const current = tab.getBoundingClientRect();
     const frames = previous
       ? [
           {

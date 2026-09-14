@@ -42,6 +42,28 @@ describe('pane layout tree', () => {
     });
   });
 
+  it('selects the adjacent tab when the active panel is removed', () => {
+    const state = emptyPaneLayout();
+    const group = addPanePanel(state, panel('a'));
+    for (const id of ['b', 'c', 'd']) {
+      addPanePanel(state, panel(id), { referenceGroupId: group.id, direction: 'within' });
+    }
+
+    removePanePanel(state, 'c');
+    expect(findPaneGroup(state.root, group.id)).toMatchObject({
+      panels: ['a', 'b', 'd'],
+      activePanelId: 'd',
+    });
+    expect(state.activePanelId).toBe('d');
+
+    removePanePanel(state, 'd');
+    expect(findPaneGroup(state.root, group.id)).toMatchObject({
+      panels: ['a', 'b'],
+      activePanelId: 'b',
+    });
+    expect(state.activePanelId).toBe('b');
+  });
+
   it('collapses empty branches when panels are removed', () => {
     const state = emptyPaneLayout();
     const files = addPanePanel(state, panel('files'));
