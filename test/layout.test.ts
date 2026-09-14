@@ -9,6 +9,7 @@ import {
   paneGroup,
   placeDetachedPaneGroup,
   removePanePanel,
+  setActivePanePanel,
   type PaneLayoutState,
 } from '../src/layout';
 
@@ -20,7 +21,7 @@ const panel = (id: string, minimumWidth?: number) => ({
 });
 
 describe('pane layout tree', () => {
-  it('inserts local binary splits and tabs without a layout library', () => {
+  it('inserts binary splits and tabs', () => {
     const state = emptyPaneLayout();
     const first = addPanePanel(state, panel('files'));
     const second = addPanePanel(state, panel('projects'), {
@@ -42,13 +43,14 @@ describe('pane layout tree', () => {
     });
   });
 
-  it('selects the adjacent tab when the active panel is removed', () => {
+  it('selects the adjacent tab and preserves selection when an inactive tab closes', () => {
     const state = emptyPaneLayout();
     const group = addPanePanel(state, panel('a'));
     for (const id of ['b', 'c', 'd']) {
       addPanePanel(state, panel(id), { referenceGroupId: group.id, direction: 'within' });
     }
 
+    setActivePanePanel(state, 'c');
     removePanePanel(state, 'c');
     expect(findPaneGroup(state.root, group.id)).toMatchObject({
       panels: ['a', 'b', 'd'],
@@ -56,9 +58,11 @@ describe('pane layout tree', () => {
     });
     expect(state.activePanelId).toBe('d');
 
+    removePanePanel(state, 'a');
+    expect(state.activePanelId).toBe('d');
     removePanePanel(state, 'd');
     expect(findPaneGroup(state.root, group.id)).toMatchObject({
-      panels: ['a', 'b'],
+      panels: ['b'],
       activePanelId: 'b',
     });
     expect(state.activePanelId).toBe('b');
