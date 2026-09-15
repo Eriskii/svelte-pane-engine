@@ -6,6 +6,7 @@ import {
   type PanePanelRenderer,
   type PanePanelState,
 } from '../src/engine';
+import { installPanePointerController } from '../src/pointer';
 
 let reducedMotion = true;
 
@@ -63,6 +64,44 @@ function setup() {
 const panel = (id: string) => ({ id, component: 'test', title: id });
 
 describe('PaneEngine DOM contracts', () => {
+  it('keeps tab actions separate from selection and drag gestures', () => {
+    const { engine } = setup();
+    const first = engine.addPanel(panel('a'));
+    engine.addPanel({
+      ...panel('b'),
+      position: { referenceGroupId: first.groupId!, direction: 'within' },
+    });
+    const elements = engine.groupElements(first.groupId!)!;
+    const tab = elements.tabElements('a')!;
+    const action = document.createElement('button');
+    const activate = vi.fn();
+    action.addEventListener('click', activate);
+    tab.actions.append(action);
+    const disposePointer = installPanePointerController(engine);
+
+    expect(tab.button.getAttribute('role')).toBe('tab');
+    expect(tab.button.contains(action)).toBe(false);
+    expect(engine.hitTest(action)).toEqual({
+      kind: 'tab-action',
+      groupId: first.groupId,
+      panelId: 'a',
+    });
+    action.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 10, clientY: 10 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 100, clientY: 100 }));
+    action.click();
+    expect(activate).toHaveBeenCalledOnce();
+    expect(engine.dragging).toBe(false);
+    expect(engine.state.activePanelId).toBe('b');
+    engine.updatePanel('a', { title: 'Renamed' });
+    expect(elements.tabElements('a')!.actions.contains(action)).toBe(true);
+    tab.actions.querySelector<HTMLButtonElement>('.pane-tab-close')!.click();
+    expect(engine.getPanel('a')).toBeUndefined();
+    expect(engine.state.activePanelId).toBe('b');
+
+    disposePointer();
+    engine.dispose();
+  });
+
   it('keeps ordered tab and renderer nodes in place for activation and unchanged updates', () => {
     const { engine, renderers } = setup();
     const first = engine.addPanel(panel('a'));
@@ -108,9 +147,8 @@ describe('PaneEngine DOM contracts', () => {
     const animate = tabs.map((tab, index) => {
       tab.getBoundingClientRect = () =>
         new DOMRect(tab.classList.contains('pane-tab-active') ? index * 100 : index * 100 + 10, 0);
-      const content = tab.querySelector<HTMLElement>('.pane-tab-content')!;
-      vi.spyOn(content, 'getAnimations').mockReturnValue([]);
-      return vi.spyOn(content, 'animate').mockReturnValue({ id: '' } as Animation);
+      vi.spyOn(tab, 'getAnimations').mockReturnValue([]);
+      return vi.spyOn(tab, 'animate').mockReturnValue({ id: '' } as Animation);
     });
     reducedMotion = false;
 

@@ -34,6 +34,13 @@ export interface PaneDisposable {
   dispose(): void;
 }
 
+export interface PaneTabElements {
+  readonly element: HTMLElement;
+  readonly button: HTMLButtonElement;
+  /** Application-owned controls may be appended here without activating or dragging the tab. */
+  readonly actions: HTMLElement;
+}
+
 export interface PaneGroupElements {
   /** The positioned group root. Owned by the engine; do not remove it. */
   readonly element: HTMLElement;
@@ -45,6 +52,8 @@ export interface PaneGroupElements {
   readonly content: HTMLElement;
   /** Resolve an engine-owned tab without depending on its DOM attributes. */
   tabElement(panelId: string): HTMLElement | undefined;
+  /** The tab's activation button and separate action outlet. */
+  tabElements(panelId: string): PaneTabElements | undefined;
 }
 
 export interface PanePanelRenderContext {
@@ -94,6 +103,7 @@ export type PaneElementHit =
   | { kind: 'panel'; groupId: string; panelId: string }
   | { kind: 'split'; axis: PaneSplitNode['axis']; splitId: string }
   | { kind: 'tab'; groupId: string; panelId: string }
+  | { kind: 'tab-action'; groupId: string; panelId: string }
   | { kind: 'tab-close'; groupId: string; panelId: string };
 
 export interface PaneEngineOptions {
@@ -276,7 +286,11 @@ export class PaneEngine {
     const tabGroup = tabPanelId ? this.groupForPanel(tabPanelId) : undefined;
     if (tabPanelId && tabGroup) {
       return {
-        kind: element.closest('.pane-tab-close') ? 'tab-close' : 'tab',
+        kind: element.closest('.pane-tab-close')
+          ? 'tab-close'
+          : element.closest('[data-pane-tab-actions]')
+            ? 'tab-action'
+            : 'tab',
         panelId: tabPanelId,
         groupId: tabGroup.id,
       };
@@ -646,16 +660,27 @@ export class PaneEngine {
     header.append(tabs);
     element.append(header, content);
     this.element.append(element);
-    const view = {
+    const tabElement = (panelId: string) =>
+      [...tabs.children].find(
+        (candidate): candidate is HTMLElement =>
+          candidate instanceof HTMLElement && candidate.dataset.tabPanelId === panelId,
+      );
+    const view: PaneGroupView = {
       element,
       tabBar: header,
       tabList: tabs,
       content,
-      tabElement: (panelId: string) =>
-        [...tabs.children].find(
-          (candidate): candidate is HTMLElement =>
-            candidate instanceof HTMLElement && candidate.dataset.tabPanelId === panelId,
-        ),
+      tabElement,
+      tabElements: (panelId) => {
+        const element = tabElement(panelId);
+        return element
+          ? {
+              element,
+              button: element.querySelector<HTMLButtonElement>(':scope > .pane-tab-select')!,
+              actions: element.querySelector<HTMLElement>(':scope > .pane-tab-actions')!,
+            }
+          : undefined;
+      },
     };
     this.#groupViews.set(groupId, view);
     return view;
@@ -683,8 +708,12 @@ export class PaneEngine {
       const tab = existingTabs.get(panelId) ?? createTab(panel);
       existingTabs.delete(panelId);
       tab.classList.toggle('pane-tab-active', group.activePanelId === panelId);
+      tab
+        .querySelector('.pane-tab-select')!
+        .setAttribute('aria-selected', String(group.activePanelId === panelId));
       const title = tab.querySelector<HTMLElement>('.pane-tab-title')!;
       if (title.textContent !== panel.title) title.textContent = panel.title;
+      tab.querySelector('.pane-tab-close')!.setAttribute('aria-label', `Close ${panel.title}`);
       if (view.tabList.children[index] !== tab) {
         view.tabList.insertBefore(tab, view.tabList.children[index] ?? null);
       }
@@ -865,7 +894,7 @@ export class PaneEngine {
       event.preventDefault();
       event.stopPropagation();
       this.closePanel(panelId);
-    } else {
+    } else if (!target?.closest('[data-pane-tab-actions]')) {
       this.activatePanel(panelId);
     }
   };
@@ -873,6 +902,7 @@ export class PaneEngine {
   private activateFromPointer = (event: MouseEvent): void => {
     if (event.button !== 0 && event.button !== 2) return;
     const target = event.target instanceof Element ? event.target : undefined;
+    if (target?.closest('[data-pane-tab-actions]')) return;
     const panelId =
       target?.closest<HTMLElement>('.pane-tab[data-tab-panel-id]')?.dataset.tabPanelId ??
       target?.closest<HTMLElement>('.pane-panel[data-pane-panel-id]')?.dataset.panePanelId;
@@ -912,23 +942,30 @@ export class PanePanelHandle {
 }
 
 function createTab(panel: PanePanelState): HTMLElement {
-  const tab = document.createElement('button');
+  const tab = document.createElement('div');
   tab.className = 'pane-tab';
-  tab.type = 'button';
   tab.dataset.tabPanelId = panel.id;
-  tab.setAttribute('role', 'tab');
+  const button = document.createElement('button');
+  button.className = 'pane-tab-select';
+  button.type = 'button';
+  button.setAttribute('role', 'tab');
   const content = document.createElement('span');
   content.className = 'pane-tab-content';
   const title = document.createElement('span');
   title.className = 'pane-tab-title';
   title.textContent = panel.title;
-  const close = document.createElement('span');
+  const actions = document.createElement('span');
+  actions.className = 'pane-tab-actions';
+  actions.dataset.paneTabActions = '';
+  const close = document.createElement('button');
   close.className = 'pane-tab-close';
-  close.setAttribute('role', 'button');
+  close.type = 'button';
   close.setAttribute('aria-label', `Close ${panel.title}`);
   close.textContent = '×';
-  content.append(title, close);
-  tab.append(content);
+  content.append(title);
+  button.append(content);
+  actions.append(close);
+  tab.append(button, actions);
   return tab;
 }
 

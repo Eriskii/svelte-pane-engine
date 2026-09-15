@@ -54,7 +54,7 @@ export function installPanePointerController(
       return;
     }
 
-    if (hit?.kind === 'tab-close') return;
+    if (hit?.kind === 'tab-close' || hit?.kind === 'tab-action') return;
     const handle = target?.closest<HTMLElement>('[data-pane-drag-handle]');
     const handleHit = handle ? engine.hitTest(handle) : undefined;
     const panelId =

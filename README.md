@@ -77,8 +77,9 @@ host owners are removed. API declarations are generated alongside the JavaScript
 
 - `PanePanelRenderer.update(panel, visible, context)` receives the current group and its stable element handles.
 - `groupElements(groupId)` exposes the group root, tab bar, tab list, and content container without selector scraping.
+- `groupElements(groupId).tabElements(panelId)` exposes the tab wrapper, its native activation `button`, and a separate `actions` outlet. Append application buttons to that outlet; their clicks and pointer gestures do not select or drag the tab. The wrapper returned by `tabElement(panelId)` remains stable across unchanged updates.
 - `registerGroupExtension(factory)` owns one application extension per physical group view. It updates on every engine synchronization—including transient drag views—and disposes when that physical view is removed. Exiting views remain alive through their exit animation.
-- `hitTest(target)` converts engine-owned DOM into semantic tab, tab-close, panel, group, or split hits.
+- `hitTest(target)` converts engine-owned DOM into semantic tab, tab-action, tab-close, panel, group, or split hits.
 - `createDropDecoration(options)` owns and reliably clears one class-based drop preview. `positionForDropTarget(target)` commits the same semantic target without a second hit test.
 
 The engine owns layout state, geometry, and generic DOM. ErisDE continues to own its panel catalog and state, Svelte header component, keyboard/pointer policy, header-extra teleport convention, and application styling. In particular, `.panel-header-extras` and `[data-pane-group-drag-id]` are application contracts, not pane-engine APIs.
