@@ -158,6 +158,7 @@ export class PaneEngine {
   #state = emptyPaneLayout();
   #floating?: FloatingPaneGroup;
   #disposed = false;
+  #gap = 1;
 
   constructor(
     readonly host: HTMLElement,
@@ -197,6 +198,15 @@ export class PaneEngine {
 
   get dragging(): boolean {
     return Boolean(this.#floating);
+  }
+
+  /** Space between groups; changing it preserves panels and split proportions. */
+  setGap(gap: number): void {
+    if (!Number.isFinite(gap) || gap < 0)
+      throw new RangeError('Pane gap must be finite and nonnegative.');
+    if (gap === this.#gap) return;
+    this.#gap = gap;
+    this.recalculate(true);
   }
 
   toJSON(): PaneLayoutState {
@@ -483,12 +493,16 @@ export class PaneEngine {
     const sourceRect = source ? this.currentGroupRect(source.id) : undefined;
     if (!source || !sourceRect) return undefined;
     const snapshot = clonePaneLayout(this.#state);
-    const snapshotGeometry = calculatePaneGeometry(snapshot, {
-      x: 0,
-      y: 0,
-      width: this.host.clientWidth,
-      height: this.host.clientHeight,
-    });
+    const snapshotGeometry = calculatePaneGeometry(
+      snapshot,
+      {
+        x: 0,
+        y: 0,
+        width: this.host.clientWidth,
+        height: this.host.clientHeight,
+      },
+      this.#gap,
+    );
     const detached = detachPanePanels(this.#state, panelIds);
     if (!detached) return undefined;
     const rect = floatingRect(sourceRect, this.host.getBoundingClientRect(), clientX, clientY);
@@ -770,7 +784,7 @@ export class PaneEngine {
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
     if (width <= 0 || height <= 0) return;
-    this.#geometry = calculatePaneGeometry(this.#state, { x: 0, y: 0, width, height }, 1);
+    this.#geometry = calculatePaneGeometry(this.#state, { x: 0, y: 0, width, height }, this.#gap);
     const targets = new Map<string, PaneRect>();
     for (const [id, rect] of this.#geometry.groups) targets.set(groupSurface(id), rect);
     for (const [id, { boundary }] of this.#geometry.splits) targets.set(splitSurface(id), boundary);
@@ -815,7 +829,7 @@ export class PaneEngine {
       const geometry = calculatePaneGeometry(
         this.#state,
         { x: 0, y: 0, width: this.host.clientWidth, height: this.host.clientHeight },
-        1,
+        this.#gap,
       );
       for (const edge of ['left', 'right', 'top', 'bottom'] as const) {
         const horizontal = edge === 'left' || edge === 'right';
@@ -833,14 +847,17 @@ export class PaneEngine {
         if (!split || !splitGeometry) continue;
         const container = splitGeometry.container;
         const start = horizontal ? container.x : container.y;
-        const available = Math.max(1, (horizontal ? container.width : container.height) - 1);
+        const available = Math.max(
+          1,
+          (horizontal ? container.width : container.height) - this.#gap,
+        );
         const coordinate =
           edge === 'left'
-            ? desired.x - 1
+            ? desired.x - this.#gap
             : edge === 'right'
               ? desired.x + desired.width
               : edge === 'top'
-                ? desired.y - 1
+                ? desired.y - this.#gap
                 : desired.y + desired.height;
         setPaneSplitRatio(this.#state.root, step.splitId, (coordinate - start) / available);
       }

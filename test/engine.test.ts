@@ -64,6 +64,31 @@ function setup() {
 const panel = (id: string) => ({ id, component: 'test', title: id });
 
 describe('PaneEngine DOM contracts', () => {
+  it('updates gaps and drag geometry without replacing panel views or split proportions', () => {
+    const { engine, renderers } = setup();
+    const first = engine.addPanel(panel('a'));
+    const second = engine.addPanel({
+      ...panel('b'),
+      position: { referenceGroupId: first.groupId!, direction: 'right' },
+    });
+    const original = engine.groupElements(first.groupId!)!.element;
+    const layout = engine.toJSON();
+    for (const gap of [24, 0, 7]) {
+      engine.setGap(gap);
+      const left = engine.currentGroupRect(first.groupId!)!;
+      const right = engine.currentGroupRect(second.groupId!)!;
+      expect(right.x - left.x - left.width).toBeCloseTo(gap);
+      expect(engine.toJSON()).toEqual(layout);
+      expect(engine.groupElements(first.groupId!)!.element).toBe(original);
+      expect(renderers.get('a')!.dispose).not.toHaveBeenCalled();
+    }
+    const selection = engine.beginPanelDrag(['a'], 100, 100)!;
+    const left = selection.snapshotGeometry.groups.get(first.groupId!)!;
+    const right = selection.snapshotGeometry.groups.get(second.groupId!)!;
+    expect(right.x - left.x - left.width).toBeCloseTo(7);
+    engine.dispose();
+  });
+
   it('keeps tab actions separate from selection and drag gestures', () => {
     const { engine } = setup();
     const first = engine.addPanel(panel('a'));
