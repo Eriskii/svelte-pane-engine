@@ -210,6 +210,10 @@ export class PaneEngine {
     return Boolean(this.#floating);
   }
 
+  get gap(): number {
+    return this.#gap;
+  }
+
   /** Space between groups; changing it preserves panels and split proportions. */
   setGap(gap: number): void {
     if (!Number.isFinite(gap) || gap < 0)

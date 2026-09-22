@@ -83,6 +83,7 @@ host owners are removed. API declarations are generated alongside the JavaScript
 - `createDropDecoration(options)` owns and reliably clears one class-based drop preview. `positionForDropTarget(target)` commits the same semantic target without a second hit test.
 - `PaneEngineOptions.groupMotionOrigin({ group, panels, rect, bounds })` supplies a group's opening/closing rectangle, for example just beyond the nearest host edge. Existing groups still reflow from their current geometry; explicit drag origins, immediate restores, and reduced motion take precedence. Omitting the callback retains the default scale/fade. Closing renderers remain mounted until their animation finishes.
 - `paneMinimumSize(node, panels, gap)` exposes the solver's minimum extent so host resize gestures can respect the same tab and subtree constraints.
+- `setGap(gap)` changes the space between groups without replacing views; `gap` reads the current value, so host geometry uses the same spacing as the engine.
 
 The engine owns layout state, geometry, and generic DOM. ErisDE continues to own its panel catalog and state, Svelte header component, keyboard/pointer policy, header-extra teleport convention, and application styling. In particular, `.panel-header-extras` and `[data-pane-group-drag-id]` are application contracts, not pane-engine APIs.
 

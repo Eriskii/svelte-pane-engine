@@ -99,6 +99,7 @@ describe('PaneEngine DOM contracts', () => {
     const layout = engine.toJSON();
     for (const gap of [24, 0, 7]) {
       engine.setGap(gap);
+      expect(engine.gap).toBe(gap);
       const left = engine.currentGroupRect(first.groupId!)!;
       const right = engine.currentGroupRect(second.groupId!)!;
       expect(right.x - left.x - left.width).toBeCloseTo(gap);
