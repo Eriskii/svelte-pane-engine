@@ -109,6 +109,15 @@ export type PaneElementHit =
 export interface PaneEngineOptions {
   createRenderer(panel: PanePanelState): PanePanelRenderer;
   motionDuration?: number;
+  /** Start/end rectangle for opening/closing a group. Omit to use the default scale/fade. */
+  groupMotionOrigin?(context: PaneGroupMotionContext): PaneRect | undefined;
+}
+
+export interface PaneGroupMotionContext {
+  readonly group: PaneGroupNode;
+  readonly panels: readonly PanePanelState[];
+  readonly rect: PaneRect;
+  readonly bounds: PaneRect;
 }
 
 export interface AddPanePanelOptions extends PanePanelState {
@@ -152,6 +161,7 @@ export class PaneEngine {
   readonly #renderers = new Map<string, { component: string; renderer: PanePanelRenderer }>();
   readonly #listeners = new Set<() => void>();
   readonly #groupExtensions = new Set<GroupExtensionRegistrationState>();
+  readonly #exits = new Map<HTMLElement, () => void>();
   readonly #resizeObserver: ResizeObserver;
   readonly #animator: PaneGeometryAnimator;
   #geometry: PaneGeometry = { groups: new Map(), splits: new Map() };
@@ -585,6 +595,7 @@ export class PaneEngine {
       registration.instances.clear();
     }
     this.#groupExtensions.clear();
+    for (const finish of this.#exits.values()) finish();
     for (const { renderer } of this.#renderers.values()) renderer.dispose();
     this.#renderers.clear();
     this.#groupViews.clear();
@@ -625,7 +636,7 @@ export class PaneEngine {
 
     for (const [panelId, current] of this.#renderers) {
       if (wantedPanels.has(panelId)) continue;
-      current.renderer.dispose();
+      if (!preserve?.contains(current.renderer.element)) current.renderer.dispose();
       this.#renderers.delete(panelId);
     }
 
@@ -637,7 +648,7 @@ export class PaneEngine {
       }
     }
     for (const [groupId, view] of this.#groupViews) {
-      if (wantedGroups.has(groupId) || view.element === preserve) continue;
+      if (wantedGroups.has(groupId) || this.#exits.has(view.element)) continue;
       this.disposeGroupExtensions(groupId);
       view.element.remove();
       this.#groupViews.delete(groupId);
@@ -784,13 +795,23 @@ export class PaneEngine {
     const width = this.host.clientWidth;
     const height = this.host.clientHeight;
     if (width <= 0 || height <= 0) return;
-    this.#geometry = calculatePaneGeometry(this.#state, { x: 0, y: 0, width, height }, this.#gap);
+    const bounds = { x: 0, y: 0, width, height };
+    this.#geometry = calculatePaneGeometry(this.#state, bounds, this.#gap);
     const targets = new Map<string, PaneRect>();
-    for (const [id, rect] of this.#geometry.groups) targets.set(groupSurface(id), rect);
+    const origins = new Map(initial);
+    for (const group of paneGroups(this.#state.root)) {
+      const surface = groupSurface(group.id);
+      const rect = this.#geometry.groups.get(group.id)!;
+      targets.set(surface, rect);
+      if (!warp && !origins.has(surface) && !this.#animator.current(surface)) {
+        const origin = this.groupMotionOrigin(group, rect, bounds);
+        if (origin) origins.set(surface, origin);
+      }
+    }
     for (const [id, { boundary }] of this.#geometry.splits) targets.set(splitSurface(id), boundary);
     if (this.#floating) targets.set(groupSurface(this.#floating.group.id), this.#floating.rect);
     this.#animator.target(targets, {
-      initial,
+      initial: origins,
       warp: warp || prefersReducedMotion(),
     });
   }
@@ -873,29 +894,62 @@ export class PaneEngine {
       }
     }
     element.classList.add('is-pane-exiting');
+    const rect = this.currentGroupRect(group.id);
+    const origin =
+      rect &&
+      this.groupMotionOrigin(group, rect, {
+        x: 0,
+        y: 0,
+        width: this.host.clientWidth,
+        height: this.host.clientHeight,
+      });
+    const frame = (rect: PaneRect): Keyframe => ({
+      transform: `translate3d(${rect.x}px, ${rect.y}px, 0)`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+    });
     const animation = element.animate(
-      [
-        { opacity: 1, transform: element.style.transform },
-        { opacity: 0, transform: `${element.style.transform} scale(0.96)` },
-      ],
+      origin && rect
+        ? [frame(rect), frame(origin)]
+        : [
+            { opacity: 1, transform: element.style.transform },
+            { opacity: 0, transform: `${element.style.transform} scale(0.96)` },
+          ],
       {
         duration:
           this.options.motionDuration ?? motionDuration(element, '--pane-motion-layout', 240),
-        easing: 'cubic-bezier(0.2, 0, 0, 1)',
+        easing: origin ? 'cubic-bezier(0.333333, 1, 0.666667, 1)' : 'cubic-bezier(0.2, 0, 0, 1)',
       },
     );
     animation.id = 'pane-group-exit';
-    void animation.finished
-      .catch(() => undefined)
-      .finally(() => {
-        element.remove();
-        const groupId = element.dataset.paneGroupId;
-        if (groupId && this.#groupViews.get(groupId)?.element === element) {
-          this.disposeGroupExtensions(groupId);
-          this.#groupViews.delete(groupId);
-        }
-      });
+    const renderers = group.panels.map((id) => this.#renderers.get(id)!.renderer);
+    const finish = () => {
+      if (!this.#exits.delete(element)) return;
+      animation.cancel();
+      for (const renderer of renderers) renderer.dispose();
+      element.remove();
+      const groupId = element.dataset.paneGroupId;
+      if (groupId && this.#groupViews.get(groupId)?.element === element) {
+        this.disposeGroupExtensions(groupId);
+        this.#groupViews.delete(groupId);
+      }
+    };
+    this.#exits.set(element, finish);
+    void animation.finished.catch(() => undefined).finally(finish);
     return true;
+  }
+
+  private groupMotionOrigin(
+    group: PaneGroupNode,
+    rect: PaneRect,
+    bounds: PaneRect,
+  ): PaneRect | undefined {
+    return this.options.groupMotionOrigin?.({
+      group: structuredClone(group),
+      panels: group.panels.map((id) => this.getPanelState(id)!),
+      rect: { ...rect },
+      bounds: { ...bounds },
+    });
   }
 
   private emitChange(): void {

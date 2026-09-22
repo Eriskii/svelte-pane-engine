@@ -81,6 +81,7 @@ host owners are removed. API declarations are generated alongside the JavaScript
 - `registerGroupExtension(factory)` owns one application extension per physical group view. It updates on every engine synchronization—including transient drag views—and disposes when that physical view is removed. Exiting views remain alive through their exit animation.
 - `hitTest(target)` converts engine-owned DOM into semantic tab, tab-action, tab-close, panel, group, or split hits.
 - `createDropDecoration(options)` owns and reliably clears one class-based drop preview. `positionForDropTarget(target)` commits the same semantic target without a second hit test.
+- `PaneEngineOptions.groupMotionOrigin({ group, panels, rect, bounds })` supplies a group's opening/closing rectangle, for example just beyond the nearest host edge. Existing groups still reflow from their current geometry; explicit drag origins, immediate restores, and reduced motion take precedence. Omitting the callback retains the default scale/fade. Closing renderers remain mounted until their animation finishes.
 
 The engine owns layout state, geometry, and generic DOM. ErisDE continues to own its panel catalog and state, Svelte header component, keyboard/pointer policy, header-extra teleport convention, and application styling. In particular, `.panel-header-extras` and `[data-pane-group-drag-id]` are application contracts, not pane-engine APIs.
 

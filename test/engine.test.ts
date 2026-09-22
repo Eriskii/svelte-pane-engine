@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PaneEngine,
+  type PaneEngineOptions,
+  type PaneGroupMotionContext,
   type PaneGroupExtensionContext,
   type PanePanelRenderContext,
   type PanePanelRenderer,
@@ -28,7 +30,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function setup() {
+function setup(options: Partial<PaneEngineOptions> = {}) {
   const host = document.createElement('div');
   Object.defineProperties(host, {
     clientWidth: { configurable: true, value: 800 },
@@ -45,6 +47,7 @@ function setup() {
   >();
   const engine = new PaneEngine(host, {
     motionDuration: 0,
+    ...options,
     createRenderer(panel) {
       const renderer = {
         element: document.createElement('article'),
@@ -64,6 +67,27 @@ function setup() {
 const panel = (id: string) => ({ id, component: 'test', title: id });
 
 describe('PaneEngine DOM contracts', () => {
+  it('uses custom entry geometry for new groups while preserving reflow and immediate restores', () => {
+    reducedMotion = false;
+    vi.spyOn(performance, 'now').mockReturnValue(0);
+    const origin = vi.fn(({ rect }: PaneGroupMotionContext) => ({ ...rect, x: 800 }));
+    const { engine } = setup({ motionDuration: 240, groupMotionOrigin: origin });
+    const first = engine.addPanel(panel('a'));
+    expect(engine.currentGroupRect(first.groupId!)!.x).toBe(800);
+    expect(engine.goalGroupRect(first.groupId!)!.x).toBe(0);
+    engine.fromJSON(engine.toJSON(), true);
+    expect(engine.currentGroupRect(first.groupId!)!.x).toBe(0);
+    const second = engine.addPanel({
+      ...panel('b'),
+      position: { referenceGroupId: first.groupId!, direction: 'right' },
+    });
+    expect(engine.currentGroupRect(second.groupId!)!.x).toBe(800);
+    expect(engine.currentGroupRect(first.groupId!)!.width).toBe(800);
+    expect(origin).toHaveBeenCalledTimes(2);
+    expect(origin.mock.calls[1][0].panels).toEqual([panel('b')]);
+    engine.dispose();
+  });
+
   it('updates gaps and drag geometry without replacing panel views or split proportions', () => {
     const { engine, renderers } = setup();
     const first = engine.addPanel(panel('a'));
@@ -213,7 +237,7 @@ describe('PaneEngine DOM contracts', () => {
 
   it('keeps an exiting group extension alive until its physical view is removed', async () => {
     reducedMotion = false;
-    const { engine } = setup();
+    const { engine, renderers } = setup();
     const first = engine.addPanel(panel('a'));
     const phases: string[] = [];
     const dispose = vi.fn();
@@ -234,10 +258,14 @@ describe('PaneEngine DOM contracts', () => {
 
     expect(phases).toEqual(['active', 'exiting']);
     expect(dispose).not.toHaveBeenCalled();
+    expect(renderers.get('a')!.dispose).not.toHaveBeenCalled();
+    engine.addPanel(panel('b'));
+    expect(group.isConnected).toBe(true);
     finish();
     await finished;
     await Promise.resolve();
     expect(dispose).toHaveBeenCalledOnce();
+    expect(renderers.get('a')!.dispose).toHaveBeenCalledOnce();
     engine.dispose();
   });
 
