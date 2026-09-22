@@ -347,8 +347,8 @@ function calculateNodeGeometry(
 
   const horizontal = node.axis === 'horizontal';
   const total = Math.max(0, (horizontal ? bounds.width : bounds.height) - gap);
-  const firstMinimum = nodeMinimum(node.first, panels, gap)[horizontal ? 'width' : 'height'];
-  const secondMinimum = nodeMinimum(node.second, panels, gap)[horizontal ? 'width' : 'height'];
+  const firstMinimum = paneMinimumSize(node.first, panels, gap)[horizontal ? 'width' : 'height'];
+  const secondMinimum = paneMinimumSize(node.second, panels, gap)[horizontal ? 'width' : 'height'];
   const preferred = total * clampRatio(node.ratio);
   const firstSize = constrainedFirstSize(total, preferred, firstMinimum, secondMinimum);
   const secondSize = Math.max(0, total - firstSize);
@@ -366,10 +366,11 @@ function calculateNodeGeometry(
   calculateNodeGeometry(node.second, second, panels, geometry, gap);
 }
 
-function nodeMinimum(
+/** Minimum extent used by the layout solver, including tabs, nested splits, and gaps. */
+export function paneMinimumSize(
   node: PaneLayoutNode,
   panels: Record<string, PanePanelState>,
-  gap: number,
+  gap = 1,
 ): { height: number; width: number } {
   if (node.type === 'group') {
     return node.panels.reduce(
@@ -380,8 +381,8 @@ function nodeMinimum(
       { width: minimumPanelWidth, height: minimumPanelHeight },
     );
   }
-  const first = nodeMinimum(node.first, panels, gap);
-  const second = nodeMinimum(node.second, panels, gap);
+  const first = paneMinimumSize(node.first, panels, gap);
+  const second = paneMinimumSize(node.second, panels, gap);
   if (node.relaxed) {
     return {
       width: Math.max(first.width, second.width),
