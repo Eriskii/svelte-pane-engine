@@ -1,10 +1,8 @@
-# svelte-pane-engine
+# `@eriskii/svelte-pane-engine`
 
 Real-time layout/tiling engine with animated resizing, panel movement, and tab groups for Svelte, inspired by Hyprland.
 
-This is the independent source repository for the engine. ErisDE consumes a pinned commit as
-its `packages/pane-engine` Git submodule and links the package through npm workspaces. See
-[PROVENANCE.md](./PROVENANCE.md) for the original revision and the integrated changes.
+See [PROVENANCE.md](./PROVENANCE.md) for the original revision and the integrated changes.
 
 ## Build and test
 
@@ -19,17 +17,42 @@ npm pack
 
 Development requires Node 22+. `npm test` exercises layout, geometry, tab motion, and DOM
 lifecycle using Happy DOM. No desktop or display server is required. `npm pack` builds/tests and
-produces `svelte-pane-engine-0.1.0.tgz`, which another project can install by file path.
+produces `eriskii-svelte-pane-engine-<version>.tgz`.
 
-The distributable entry point and declarations are generated in `dist/`. Consumers import `svelte-pane-engine` rather than reaching into `src` or engine DOM.
+The distributable entry point and declarations are generated in `dist/`. Consumers import `@eriskii/svelte-pane-engine` rather than reaching into `src` or engine DOM.
+
+## Install
+
+Releases are published to GitHub Packages. A consuming project maps the `@eriskii` scope to
+that registry in its `.npmrc`:
+
+```ini
+@eriskii:registry=https://npm.pkg.github.com
+```
+
+and authenticates with a `read:packages` token in `~/.npmrc`
+(`//npm.pkg.github.com/:_authToken=<token>`). Then:
+
+```sh
+npm install @eriskii/svelte-pane-engine
+```
+
+## Release
+
+Bump `version` in `package.json`, commit, and push a matching `v<version>` tag.
+`.github/workflows/release.yml` tests the tagged commit and publishes it to GitHub Packages.
+
+In [ErisMonorepo](https://github.com/Eriskii/ErisMonorepo) this repository is checked out at
+`libs/svelte-pane-engine` and linked into every app through npm workspaces, so apps there build against the
+local source instead of the published release.
 
 ## Minimal browser usage
 
 Provide a sized host element and a renderer for your panel content:
 
 ```ts
-import { PaneEngine } from 'svelte-pane-engine';
-import 'svelte-pane-engine/style.css';
+import { PaneEngine } from '@eriskii/svelte-pane-engine';
+import '@eriskii/svelte-pane-engine/style.css';
 
 const engine = new PaneEngine(document.querySelector<HTMLElement>('#workspace')!, {
   createRenderer() {
@@ -85,7 +108,7 @@ host owners are removed. API declarations are generated alongside the JavaScript
 - `paneMinimumSize(node, panels, gap)` exposes the solver's minimum extent so host resize gestures can respect the same tab and subtree constraints.
 - `setGap(gap)` changes the space between groups without replacing views; `gap` reads the current value, so host geometry uses the same spacing as the engine.
 
-The engine owns layout state, geometry, and generic DOM. ErisDE continues to own its panel catalog and state, Svelte header component, keyboard/pointer policy, header-extra teleport convention, and application styling. In particular, `.panel-header-extras` and `[data-pane-group-drag-id]` are application contracts, not pane-engine APIs.
+The engine owns layout state, geometry, and generic DOM. ErisDE owns its panel catalog and state, Svelte header component, keyboard/pointer policy, header-extra teleport convention, and application styling. In particular, `.panel-header-extras` and `[data-pane-group-drag-id]` are application contracts, not pane-engine APIs.
 
 ## Upstream demo
 

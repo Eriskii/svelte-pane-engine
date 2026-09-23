@@ -2,9 +2,8 @@
 
 This repository continues [`Eriskii/svelte-pane-engine`](https://github.com/Eriskii/svelte-pane-engine)
 from its original commit [`8e60fd8ae35a06f2200f9a178634e9b38fd7e264`](https://github.com/Eriskii/svelte-pane-engine/commit/8e60fd8ae35a06f2200f9a178634e9b38fd7e264).
-ErisDE temporarily maintained a source copy based on that revision. Its generic fixes and
-integration contracts have been brought back here with the original Git history intact.
-ErisDE now pins this repository as a Git submodule instead of maintaining a separate copy.
+Generic fixes and integration contracts developed in ErisDE live here, on top of the original
+Git history.
 
 The upstream work is Copyright (c) 2026 Isolyth and licensed under the MIT License; the unmodified license text is retained in [`LICENSE`](./LICENSE).
 
@@ -18,4 +17,4 @@ Relative to the original revision, the integrated changes:
 - expose stable group elements, group-extension lifecycle, renderer context, DOM hit-testing, and drop-decoration contracts;
 - test those fixes and lifecycle contracts before packing.
 
-Application-specific panel registration, state, Svelte group chrome, and drag policy remain in ErisDE and are not part of this generic package.
+Application-specific panel registration, state, Svelte group chrome, and drag policy belong to ErisDE and are not part of this generic package.

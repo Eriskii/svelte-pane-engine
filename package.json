@@ -1,5 +1,5 @@
 {
-  "name": "svelte-pane-engine",
+  "name": "@eriskii/svelte-pane-engine",
   "version": "0.1.0",
   "description": "Framework-neutral pane layout engine with optional Svelte renderer bindings.",
   "license": "MIT",
@@ -54,5 +54,8 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }
